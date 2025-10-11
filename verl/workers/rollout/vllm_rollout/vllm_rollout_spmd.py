@@ -163,6 +163,9 @@ class vLLMRollout(BaseRollout):
                 "Enable chunked prefill, max_num_batched_tokens is smaller than max_model_len, \
                              please increase max_num_batched_tokens or disable chunked prefill"
             )
+        # patch this for npu
+        if hasattr(config, "dp_model_parallel_size") and config.dp_model_parallel_size > 1:
+            self._init_dp_env(config)
 
         load_format = "dummy" if config.load_format.startswith("dummy") else config.load_format
 
@@ -207,6 +210,7 @@ class vLLMRollout(BaseRollout):
             enable_chunked_prefill=config.enable_chunked_prefill,
             enable_prefix_caching=config.enable_prefix_caching,
             trust_remote_code=trust_remote_code,
+            enable_expert_parallel=config.get("enable_expert_parallel", False),
             seed=config.get("seed", 0),
             **compilation_config,
             **self.lora_kwargs,
@@ -231,6 +235,35 @@ class vLLMRollout(BaseRollout):
         self.sampling_params = SamplingParams(**kwargs)
 
         self.pad_token_id = tokenizer.pad_token_id
+
+    def _init_dp_env(self, config):
+        rank = torch.distributed.get_rank()
+        world_size = torch.distributed.get_world_size()
+        tp_size = int(config.get("tensor_model_parallel_size", 1))
+        dp_size = int(config.get("dp_model_parallel_size", 1))
+
+        all_ranks = torch.arange(world_size).reshape(-1, dp_size, 1, tp_size)  # noqa
+        group_ranks = all_ranks.transpose(1, 3).reshape(-1, dp_size).unbind(0)
+        group_ranks = [x.tolist() for x in group_ranks]
+
+        # all gather ip
+        ip_addr = ray.util.get_node_ip_address()
+        ip_list = [None] * world_size
+        torch.distributed.all_gather_object(ip_list, ip_addr)
+
+        for index, group_rank in enumerate(group_ranks):
+            if torch.distributed.get_rank() in group_rank:
+                os.environ["VLLM_DP_MASTER_PORT"] = str(int(os.environ.get("MASTER_PORT")) + 1 + index)
+                os.environ["VLLM_DP_MASTER_IP"] = ip_list[group_rank[0]]
+        local_dp_rank = rank // tp_size % dp_size
+        os.environ["VLLM_DP_RANK"] = str(local_dp_rank)
+        os.environ["VLLM_DP_SIZE"] = str(dp_size)
+        os.environ["VLLM_PORT"] = os.environ["VLLM_DP_MASTER_PORT"]
+        envs.VLLM_DP_RANK = int(os.environ["VLLM_DP_RANK"])
+        envs.VLLM_DP_MASTER_IP = os.environ["VLLM_DP_MASTER_IP"]
+        envs.VLLM_DP_MASTER_PORT = int(os.environ["VLLM_DP_MASTER_PORT"])
+
+        print(f"[VLLM] using TP={tp_size}, DP={dp_size}", flush=True)
 
     @contextmanager
     def update_sampling_params(self, **kwargs):
