@@ -166,6 +166,58 @@ class Qwen3MoEModel(BaseModelInitializer):
         return model
 
 
+class BailingMoEModel(BaseModelInitializer):
+    """Initializer for BailingMoeV2 models."""
+
+    def get_transformer_layer_spec(self, vp_stage=None):
+        assert self.tfconfig.normalization == "RMSNorm", "only RMSNorm is supported for now"
+        extra_kwargs = {} if not self.has_vp_stage else {"vp_stage": vp_stage}
+        transformer_layer_spec = get_gpt_decoder_block_spec(self.tfconfig, use_transformer_engine=True, **extra_kwargs)
+        
+        # Patch layer spec for Bailing specific features
+        # Bailing has mixed architecture: first_k_dense_replace layers are dense, rest are MoE
+        first_k_dense_replace = getattr(self.hf_config, 'first_k_dense_replace', 0)
+        
+        for i in range(len(transformer_layer_spec.layer_specs)):
+            layer_spec = transformer_layer_spec.layer_specs[i]
+            
+            # Configure shared experts for MoE layers
+            if i >= first_k_dense_replace:
+                if hasattr(layer_spec.submodules.mlp.submodules, 'shared_experts'):
+                    layer_spec.submodules.mlp.submodules.shared_experts.params["gate"] = True
+                
+                # Configure Bailing specific MoE features
+                if hasattr(layer_spec.submodules.mlp, 'router'):
+                    # Set router-specific parameters for Bailing
+                    router_params = getattr(layer_spec.submodules.mlp.router, 'params', {})
+                    router_params.update({
+                        "enable_expert_bias": getattr(self.hf_config, 'moe_router_enable_expert_bias', False),
+                        "router_dtype": getattr(self.hf_config, 'router_dtype', 'fp32'),
+                        "score_function": getattr(self.hf_config, 'score_function', 'sigmoid'),
+                    })
+        
+        return transformer_layer_spec
+
+    def initialize(self, **kwargs):
+        # Initialize the model
+        model = super().initialize(**kwargs)
+        
+        # Bailing specific initialization
+        freeze_moe_router = kwargs.get("freeze_moe_router", False)  # Default to False for Bailing
+        if freeze_moe_router:
+            first_k_dense_replace = getattr(self.hf_config, 'first_k_dense_replace', 0)
+            for i, layer in enumerate(model.decoder.layers):
+                if i >= first_k_dense_replace:  # Only freeze MoE layers
+                    if hasattr(layer.mlp, 'router'):
+                        layer.mlp.router.weight.requires_grad = False
+                        
+                        # Also freeze shared expert router if exists
+                        if hasattr(layer.mlp, 'shared_experts') and hasattr(layer.mlp.shared_experts, 'gate'):
+                            layer.mlp.shared_experts.gate.weight.requires_grad = False
+        
+        return model
+
+
 class DeepseekV3Model(BaseModelInitializer):
     """Initializer for DeepseekV3 models."""
 

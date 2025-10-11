@@ -281,6 +281,46 @@ def hf_to_mcore_config_qwen3moe(
     return check_and_construct_configs(args, TransformerConfig)
 
 
+def hf_to_mcore_config_bailing_moe(
+    hf_config: PretrainedConfig, dtype: torch.dtype, **override_transformer_config_kwargs
+) -> TransformerConfig:
+    """Convert BailingMoeV2ForCausalLM config to mcore TransformerConfig."""
+    args: dict = _get_base_transformer_config(
+        hf_config=hf_config,
+        dtype=dtype,
+        use_cpu_initialization=False,
+        add_bias_linear=hf_config.use_bias,
+        layernorm_epsilon=hf_config.rms_norm_eps,
+        # MoE specific
+        moe_ffn_hidden_size=hf_config.moe_intermediate_size,
+        moe_router_bias_update_rate=0.001,
+        moe_router_topk=hf_config.num_experts_per_tok,
+        num_moe_experts=hf_config.num_experts,
+        moe_aux_loss_coeff=getattr(hf_config, 'router_aux_loss_coef', 0.0),
+        moe_router_load_balancing_type="none",  # turn off aux_loss as it hurts perf in RL
+        moe_grouped_gemm=True,
+        moe_router_score_function=hf_config.score_function,  # "sigmoid" for Bailing
+        # Other optimizations
+        persist_layer_norm=True,
+        bias_activation_fusion=True,
+        bias_dropout_fusion=True,
+        # Bailing specific
+        moe_router_pre_softmax=False,
+        qk_layernorm=hf_config.use_qk_norm,
+        # Bailing MoE specific features
+        num_shared_experts=getattr(hf_config, 'num_shared_experts', 1),
+        first_k_dense_replace=getattr(hf_config, 'first_k_dense_replace', 0),
+        n_group=getattr(hf_config, 'n_group', 1),
+        topk_group=getattr(hf_config, 'topk_group', 1),
+        routed_scaling_factor=getattr(hf_config, 'routed_scaling_factor', 1.0),
+        moe_router_enable_expert_bias=getattr(hf_config, 'moe_router_enable_expert_bias', False),
+        router_dtype=getattr(hf_config, 'router_dtype', 'fp32'),
+    )
+    # override_transformer_config_kwargs as kwargs shall never be none
+    args.update(override_transformer_config_kwargs)
+    return check_and_construct_configs(args, TransformerConfig)
+
+
 def hf_to_mcore_config_dpskv3(
     hf_config: PretrainedConfig, dtype: torch.dtype, **override_transformer_config_kwargs
 ) -> MLATransformerConfig:

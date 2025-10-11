@@ -477,3 +477,110 @@ class McoreToHFWeightConverterQwen3Moe(McoreToHFWeightConverterDense):
         else:
             raise NotImplementedError(f"Unsupported parameter name: {name}")
         return convert_names, params
+
+
+class McoreToHFWeightConverterBailingMoe(McoreToHFWeightConverterDense):
+    def _convert_attention_param(self, name: str, params: list[torch.Tensor]) -> tuple[list[str], list[torch.Tensor]]:
+        # Bailing MoE attention parameter conversion
+        # mcore format:
+        # 'decoder.layers.0.self_attention.linear_qkv.weight' -> splits into q_proj, k_proj, v_proj
+        # 'decoder.layers.0.self_attention.linear_proj.weight' -> o_proj.weight
+        # 'decoder.layers.0.self_attention.linear_qkv.layer_norm_weight' -> input_layernorm.weight
+        # 'decoder.layers.0.self_attention.q_layernorm.weight' -> self_attn.q_norm.weight
+        # 'decoder.layers.0.self_attention.k_layernorm.weight' -> self_attn.k_norm.weight
+        
+        layer_number = name.split(".")[2]
+        convert_names = []
+        
+        if "self_attention.linear_qkv.bias" in name or "self_attention.linear_qkv.weight" in name:
+            param_type = name.split(".")[-1]
+            assert param_type == "bias" or param_type == "weight"
+            convert_names.append(f"model.layers.{layer_number}.self_attn.q_proj.{param_type}")
+            convert_names.append(f"model.layers.{layer_number}.self_attn.k_proj.{param_type}")
+            convert_names.append(f"model.layers.{layer_number}.self_attn.v_proj.{param_type}")
+            assert len(params) == 3
+        elif "self_attention.linear_proj.weight" in name:
+            convert_names.append(f"model.layers.{layer_number}.self_attn.o_proj.weight")
+            assert len(params) == 1
+        elif "self_attention.linear_qkv.layer_norm_weight" in name:
+            convert_names.append(f"model.layers.{layer_number}.input_layernorm.weight")
+            assert len(params) == 1
+        elif "self_attention.q_layernorm.weight" in name:
+            convert_names.append(f"model.layers.{layer_number}.self_attn.q_norm.weight")
+            assert len(params) == 1
+        elif "self_attention.k_layernorm.weight" in name:
+            convert_names.append(f"model.layers.{layer_number}.self_attn.k_norm.weight")
+            assert len(params) == 1
+        else:
+            raise NotImplementedError(f"Unsupported parameter name: {name}")
+        return convert_names, params
+
+    def _convert_mlp_param(self, name: str, params: list[torch.Tensor]) -> tuple[list[str], list[torch.Tensor]]:
+        # Bailing MoE MLP parameter conversion
+        # For dense layers (first 4 layers): use regular MLP structure
+        # For MoE layers (from layer 4 onwards): use MoE structure with shared experts
+        
+        # mcore format examples:
+        # Dense layers:
+        # 'decoder.layers.0.mlp.linear_fc1.layer_norm_weight' -> post_attention_layernorm.weight
+        # 'decoder.layers.0.mlp.linear_fc1.weight' -> gate_proj.weight, up_proj.weight
+        # 'decoder.layers.0.mlp.linear_fc2.weight' -> down_proj.weight
+        # 
+        # MoE layers:
+        # 'decoder.layers.4.mlp.router.weight' -> mlp.gate.weight
+        # 'decoder.layers.4.mlp.experts.linear_fc1.weight0' -> mlp.experts.0.gate_proj.weight, mlp.experts.0.up_proj.weight
+        # 'decoder.layers.4.mlp.experts.linear_fc2.weight0' -> mlp.experts.0.down_proj.weight
+        # 'decoder.layers.4.mlp.shared_experts.linear_fc1.weight' -> mlp.shared_experts.gate_proj.weight, mlp.shared_experts.up_proj.weight
+        # 'decoder.layers.4.mlp.shared_experts.linear_fc2.weight' -> mlp.shared_experts.down_proj.weight
+        
+        layer_number = name.split(".")[2]
+        convert_names = []
+        
+        # Check if this is a dense layer (first 4 layers) or MoE layer
+        layer_idx = int(layer_number)
+        
+        if layer_idx < 4:
+            # Dense layer conversion
+            if "mlp.linear_fc1.layer_norm_weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.post_attention_layernorm.weight")
+                assert len(params) == 1
+            elif "mlp.linear_fc1.weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.mlp.gate_proj.weight")
+                convert_names.append(f"model.layers.{layer_number}.mlp.up_proj.weight")
+                assert len(params) == 2
+            elif "mlp.linear_fc2.weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.mlp.down_proj.weight")
+                assert len(params) == 1
+            else:
+                raise NotImplementedError(f"Unsupported dense layer parameter name: {name}")
+        else:
+            # MoE layer conversion
+            if "pre_mlp_layernorm" in name:
+                convert_names.append(f"model.layers.{layer_number}.post_attention_layernorm.weight")
+                assert len(params) == 1
+            elif "mlp.router.weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.mlp.gate.weight")
+                assert len(params) == 1
+            elif "mlp.experts.linear_fc1" in name:  # split gate_proj and up_proj
+                expert_id = name.split("weight")[-1]
+                convert_names.append(f"model.layers.{layer_number}.mlp.experts.{expert_id}.gate_proj.weight")
+                convert_names.append(f"model.layers.{layer_number}.mlp.experts.{expert_id}.up_proj.weight")
+                assert len(params) == 2
+            elif "mlp.experts.linear_fc2" in name:
+                expert_id = name.split("weight")[-1]
+                convert_names.append(f"model.layers.{layer_number}.mlp.experts.{expert_id}.down_proj.weight")
+                assert len(params) == 1
+            elif "shared_experts.gate_weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.mlp.shared_expert_gate.weight")
+                assert len(params) == 1
+            elif "shared_experts.linear_fc1.weight" in name:  # split gate_proj and up_proj
+                convert_names.append(f"model.layers.{layer_number}.mlp.shared_expert.gate_proj.weight")
+                convert_names.append(f"model.layers.{layer_number}.mlp.shared_expert.up_proj.weight")
+                assert len(params) == 2
+            elif "shared_experts.linear_fc2.weight" in name:
+                convert_names.append(f"model.layers.{layer_number}.mlp.shared_expert.down_proj.weight")
+                assert len(params) == 1
+            else:
+                raise NotImplementedError(f"Unsupported MoE layer parameter name: {name}")
+        
+        return convert_names, params

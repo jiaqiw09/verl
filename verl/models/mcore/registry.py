@@ -25,6 +25,7 @@ import torch.nn as nn
 from .config_converter import (
     PretrainedConfig,
     TransformerConfig,
+    hf_to_mcore_config_bailing_moe,
     hf_to_mcore_config_dense,
     hf_to_mcore_config_dpskv3,
     hf_to_mcore_config_llama4,
@@ -36,6 +37,7 @@ from .config_converter import (
 from .model_forward import gptmodel_forward, gptmodel_forward_qwen2_5_vl
 from .model_forward_fused import fused_forward_gptmodel, fused_forward_qwen2_5_vl
 from .model_initializer import (
+    BailingMoEModel,
     BaseModelInitializer,
     DeepseekV3Model,
     DenseModel,
@@ -45,6 +47,7 @@ from .model_initializer import (
     Qwen25VLModel,
 )
 from .weight_converter import (
+    McoreToHFWeightConverterBailingMoe,
     McoreToHFWeightConverterDense,
     McoreToHFWeightConverterDpskv3,
     McoreToHFWeightConverterMixtral,
@@ -65,7 +68,7 @@ class SupportedModel(Enum):
     QWEN3 = "Qwen3ForCausalLM"  # tested
     QWEN3_MOE = "Qwen3MoeForCausalLM"  # tested
     GLM4_MOE = "Glm4MoeForCausalLM"
-
+    BAILING_MOE_V2 = "BailingMoeV2ForCausalLM"  # not tested
     QWEN3_TOKEN_CLASSIFICATION = "Qwen3ForTokenClassification"
 
 
@@ -80,6 +83,7 @@ MODEL_CONFIG_CONVERTER_REGISTRY: dict[SupportedModel, Callable[[PretrainedConfig
     SupportedModel.LLAMA4: hf_to_mcore_config_llama4,
     SupportedModel.QWEN3: hf_to_mcore_config_dense,
     SupportedModel.QWEN3_MOE: hf_to_mcore_config_qwen3moe,
+    SupportedModel.BAILING_MOE_V2: hf_to_mcore_config_bailing_moe,
     SupportedModel.QWEN2_5_VL: hf_to_mcore_config_qwen2_5_vl,
     SupportedModel.QWEN3_TOKEN_CLASSIFICATION: hf_to_mcore_config_dense,
 }
@@ -95,6 +99,7 @@ MODEL_INITIALIZER_REGISTRY: dict[SupportedModel, type[BaseModelInitializer]] = {
     SupportedModel.LLAMA4: DenseModel,
     SupportedModel.QWEN3: DenseModel,
     SupportedModel.QWEN3_MOE: Qwen3MoEModel,
+    SupportedModel.BAILING_MOE_V2: BailingMoEModel,
     SupportedModel.QWEN2_5_VL: Qwen25VLModel,
     SupportedModel.QWEN3_TOKEN_CLASSIFICATION: DenseModel,
 }
@@ -110,6 +115,7 @@ MODEL_FORWARD_REGISTRY: dict[SupportedModel, Callable] = {
     SupportedModel.LLAMA4: gptmodel_forward,
     SupportedModel.QWEN3: gptmodel_forward,
     SupportedModel.QWEN3_MOE: gptmodel_forward,
+    SupportedModel.BAILING_MOE_V2: gptmodel_forward,
     SupportedModel.QWEN2_5_VL: gptmodel_forward_qwen2_5_vl,
     SupportedModel.DEEPSEEK_V3: gptmodel_forward,
     SupportedModel.GLM4_MOE: gptmodel_forward,
@@ -127,6 +133,7 @@ MODEL_FORWARD_FUSED_REGISTRY: dict[SupportedModel, Callable] = {
     SupportedModel.LLAMA4: fused_forward_gptmodel,
     SupportedModel.QWEN3: fused_forward_gptmodel,
     SupportedModel.QWEN3_MOE: fused_forward_gptmodel,
+    SupportedModel.BAILING_MOE_V2: fused_forward_gptmodel,
     SupportedModel.DEEPSEEK_V3: fused_forward_gptmodel,
     SupportedModel.GLM4_MOE: fused_forward_gptmodel,
 }
@@ -140,6 +147,7 @@ MODEL_WEIGHT_CONVERTER_REGISTRY: dict[SupportedModel, type] = {
     SupportedModel.DEEPSEEK_V3: McoreToHFWeightConverterDpskv3,
     SupportedModel.QWEN3: McoreToHFWeightConverterDense,
     SupportedModel.QWEN3_MOE: McoreToHFWeightConverterQwen3Moe,
+    SupportedModel.BAILING_MOE_V2: McoreToHFWeightConverterBailingMoe,
     SupportedModel.QWEN2_5_VL: McoreToHFWeightConverterQwen2_5_VL,
     SupportedModel.QWEN3_TOKEN_CLASSIFICATION: McoreToHFWeightConverterDense,
 }
