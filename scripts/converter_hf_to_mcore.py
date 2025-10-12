@@ -438,18 +438,19 @@ def convert_checkpoint_from_transformers_to_megatron_bailingv2moe(
 
 
         # Attention: QKV is merged
-        numel += safe_copy(hf_layer.self_attn.query_key_value.weight, layer.self_attention.linear_qkv.weight)
-        numel += safe_copy(hf_layer.self_attn.dense.weight, layer.self_attention.linear_proj.weight)
+        numel += safe_copy(hf_layer.attention.query_key_value.weight, layer.self_attention.linear_qkv.weight)
+        numel += safe_copy(hf_layer.attention.dense.weight, layer.self_attention.linear_proj.weight)
 
         # MoE Router
-        numel += safe_copy(hf_layer.mlp.gate.weight, layer.mlp.router.weight)
-        if hasattr(hf_layer.mlp.gate, 'expert_bias'):
-            numel += safe_copy(
-                hf_layer.mlp.gate.expert_bias,
-                layer.mlp.router.expert_bias,
-                skip_dtype_assert=True
-            )
-
+        if hasattr(hf_layer.mlp, 'gate'):
+            numel += safe_copy(hf_layer.mlp.gate.weight, layer.mlp.router.weight)
+            if hasattr(hf_layer.mlp.gate, 'expert_bias'):
+                numel += safe_copy(
+                    hf_layer.mlp.gate.expert_bias,
+                    layer.mlp.router.expert_bias,
+                    skip_dtype_assert=True
+                )
+    
         # Experts
         moe_grouped_gemm = hasattr(layer.mlp.experts, 'linear_fc1') and hasattr(layer.mlp.experts.linear_fc1, 'weight0')
         if moe_grouped_gemm:
