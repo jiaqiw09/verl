@@ -480,6 +480,11 @@ class McoreToHFWeightConverterQwen3Moe(McoreToHFWeightConverterDense):
 
 
 class McoreToHFWeightConverterBailingMoe(McoreToHFWeightConverterDense):
+
+    def __init__(self, hf_config, mcore_config):
+        super().__init__(hf_config, mcore_config)
+        self.first_k_dense = getattr(hf_config, "first_k_dense_replace", 0)
+
     def _convert_attention_param(self, name: str, params: list[torch.Tensor]) -> tuple[list[str], list[torch.Tensor]]:
         # Bailing MoE attention parameter conversion
         # mcore format:
@@ -516,30 +521,14 @@ class McoreToHFWeightConverterBailingMoe(McoreToHFWeightConverterDense):
         return convert_names, params
 
     def _convert_mlp_param(self, name: str, params: list[torch.Tensor]) -> tuple[list[str], list[torch.Tensor]]:
-        # Bailing MoE MLP parameter conversion
-        # For dense layers (first 4 layers): use regular MLP structure
-        # For MoE layers (from layer 4 onwards): use MoE structure with shared experts
-        
-        # mcore format examples:
-        # Dense layers:
-        # 'decoder.layers.0.mlp.linear_fc1.layer_norm_weight' -> post_attention_layernorm.weight
-        # 'decoder.layers.0.mlp.linear_fc1.weight' -> gate_proj.weight, up_proj.weight
-        # 'decoder.layers.0.mlp.linear_fc2.weight' -> down_proj.weight
-        # 
-        # MoE layers:
-        # 'decoder.layers.4.mlp.router.weight' -> mlp.gate.weight
-        # 'decoder.layers.4.mlp.experts.linear_fc1.weight0' -> mlp.experts.0.gate_proj.weight, mlp.experts.0.up_proj.weight
-        # 'decoder.layers.4.mlp.experts.linear_fc2.weight0' -> mlp.experts.0.down_proj.weight
-        # 'decoder.layers.4.mlp.shared_experts.linear_fc1.weight' -> mlp.shared_experts.gate_proj.weight, mlp.shared_experts.up_proj.weight
-        # 'decoder.layers.4.mlp.shared_experts.linear_fc2.weight' -> mlp.shared_experts.down_proj.weight
-        
+
         layer_number = name.split(".")[2]
         convert_names = []
         
         # Check if this is a dense layer (first 4 layers) or MoE layer
         layer_idx = int(layer_number)
         
-        if layer_idx < 4:
+        if layer_idx < self.first_k_dense:
             # Dense layer conversion
             if "mlp.linear_fc1.layer_norm_weight" in name:
                 convert_names.append(f"model.layers.{layer_number}.post_attention_layernorm.weight")
