@@ -424,11 +424,18 @@ def convert_checkpoint_from_transformers_to_megatron_bailingv2moe(
         numel_cur = numel
 
         # LayerNorms
-        if getattr(layer.input_layernorm, "weight", None) is not None:
-            numel += safe_copy(hf_layer.input_layernorm.weight, layer.input_layernorm.weight)
-        
-        if getattr(layer.post_attention_layernorm, "weight", None) is not None:
-            numel += safe_copy(hf_layer.post_attention_layernorm.weight, layer.pre_mlp_layernorm.weight)
+        try:
+            weight = hf_layer.input_layernorm.weight
+            numel += safe_copy(weight, layer.input_layernorm.weight)
+        except AttributeError:
+            pass
+
+        try:
+            weight = hf_layer.post_attention_layernorm.weight
+            numel += safe_copy(weight, layer.pre_mlp_layernorm.weight)
+        except AttributeError:
+            pass
+
 
         # Attention: QKV is merged
         numel += safe_copy(hf_layer.self_attn.query_key_value.weight, layer.self_attention.linear_qkv.weight)
