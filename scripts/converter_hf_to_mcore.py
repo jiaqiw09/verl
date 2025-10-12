@@ -444,8 +444,7 @@ def convert_checkpoint_from_transformers_to_megatron_bailingv2moe(
         is_moe_layer = hasattr(hf_layer.mlp, 'gate')
 
         if is_moe_layer:
-            # === MoE Layer (layers 1~19) ===
-            # MoE Router (gate)
+            # === MoE Router (gate) ===
             numel += safe_copy(hf_layer.mlp.gate.weight, layer.mlp.router.weight)
             if hasattr(hf_layer.mlp.gate, 'expert_bias'):
                 numel += safe_copy(
@@ -454,25 +453,19 @@ def convert_checkpoint_from_transformers_to_megatron_bailingv2moe(
                     skip_dtype_assert=True
                 )
 
-            # Experts
-            moe_grouped_gemm = hasattr(layer.mlp.experts, 'linear_fc1') and hasattr(layer.mlp.experts.linear_fc1, 'weight0')
-            if moe_grouped_gemm:
-                for i, hf_expert in enumerate(hf_layer.mlp.experts):
-                    fc1_weight = torch.cat([hf_expert.gate_proj.weight, hf_expert.up_proj.weight], dim=0)
-                    fc2_weight = hf_expert.down_proj.weight
-                    getattr(layer.mlp.experts.linear_fc1, f"weight{i}").copy_(fc1_weight)
-                    getattr(layer.mlp.experts.linear_fc2, f"weight{i}").copy_(fc2_weight)
-                    numel += fc1_weight.numel() + fc2_weight.numel()
-            else:
-                for i, hf_expert in enumerate(hf_layer.mlp.experts):
-                    expert = layer.mlp.experts.local_experts[i]
-                    fc1_weight = torch.cat([hf_expert.gate_proj.weight, hf_expert.up_proj.weight], dim=0)
-                    fc2_weight = hf_expert.down_proj.weight
-                    expert.linear_fc1.weight.copy_(fc1_weight)
-                    expert.linear_fc2.weight.copy_(fc2_weight)
-                    numel += fc1_weight.numel() + fc2_weight.numel()
+            # === Experts ===
+            for i, hf_expert in enumerate(hf_layer.mlp.experts):
+                layer_expert = layer.mlp.experts[i]
+                layer_expert.gate_proj.weight.copy_(hf_expert.gate_proj.weight)
+                layer_expert.up_proj.weight.copy_(hf_expert.up_proj.weight)
+                layer_expert.down_proj.weight.copy_(hf_expert.down_proj.weight)
+                numel += (
+                    hf_expert.gate_proj.numel()
+                    + hf_expert.up_proj.numel()
+                    + hf_expert.down_proj.numel()
+                )
 
-            # Shared Experts
+            # === Shared Experts ===
             if hasattr(hf_layer.mlp, 'shared_experts'):
                 shared_fc1 = torch.cat([
                     hf_layer.mlp.shared_experts.gate_proj.weight,
@@ -484,8 +477,7 @@ def convert_checkpoint_from_transformers_to_megatron_bailingv2moe(
                 numel += shared_fc1.numel() + shared_fc2.numel()
 
         else:
-            # === Dense MLP Layer (layer 0) ===
-            # Copy standard MLP (gate_proj, up_proj, down_proj)
+            # === Dense MLP Layer ===
             fc1_weight = torch.cat([hf_layer.mlp.gate_proj.weight, hf_layer.mlp.up_proj.weight], dim=0)
             fc2_weight = hf_layer.mlp.down_proj.weight
             layer.mlp.linear_fc1.weight.copy_(fc1_weight)
