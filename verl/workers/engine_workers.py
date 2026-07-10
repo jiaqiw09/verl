@@ -39,6 +39,7 @@ from verl.utils.flops_counter import FlopsCounter
 from verl.utils.import_utils import import_external_libs
 from verl.utils.memory_utils import aggressive_empty_cache
 from verl.utils.metric.utils import Metric
+from verl.utils.npu_conv1d_prewarm import prewarm_npu_causal_conv1d_once
 from verl.utils.profiler import DistProfiler, DistProfilerExtension, ProfilerConfig, log_gpu_memory_usage
 from verl.utils.py_functional import append_to_dict
 from verl.utils.tensordict_utils import maybe_fix_3d_position_ids
@@ -577,6 +578,7 @@ class ActorRolloutRefWorker(Worker, DistProfilerExtension):
             self.actor = TrainingWorker(config=actor_training_config)
             self.actor.reset()
             self.actor.set_loss_fn(self.loss_fn)
+            prewarm_npu_causal_conv1d_once()
             self.set_dispatch_collect(mesh_name="actor", **self.actor.get_dispatch_collect())
 
         # 3. build rollout engine
